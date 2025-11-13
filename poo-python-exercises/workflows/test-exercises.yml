@@ -1,0 +1,139 @@
+name: 🧪 Correção Automática de Exercícios POO
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths: 
+      - 'respExercicio*.py'
+      - 'Resposta_*.py'
+
+jobs:
+  test-exercises:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout do código
+      uses: actions/checkout@v3
+    
+    - name: 🐍 Configurar Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: 📋 Detectar exercícios modificados
+      id: detect-exercises
+      run: |
+        echo "Detectando exercícios modificados..."
+        exercises=""
+        for file in respExercicio*.py Resposta_*.py; do
+          if [ -f "$file" ]; then
+            exercises="$exercises $file"
+          fi
+        done
+        echo "exercises=$exercises" >> $GITHUB_OUTPUT
+        echo "Exercícios encontrados: $exercises"
+    
+    - name: 🧪 Executar testes dos exercícios
+      run: |
+        echo "🚀 Iniciando correção automática..."
+        total_tests=0
+        passed_tests=0
+        failed_exercises=""
+        
+        for exercise_file in ${{ steps.detect-exercises.outputs.exercises }}; do
+          if [ -f "$exercise_file" ]; then
+            # Extrair número do exercício
+            if [[ $exercise_file =~ respExercicio([0-9]+)\.py ]]; then
+              exercise_num=$(printf "%02d" ${BASH_REMATCH[1]})
+              test_file="tests/test_exercicio${exercise_num}.py"
+            elif [[ $exercise_file =~ Resposta_([0-9]+)\.py ]]; then
+              exercise_num=${BASH_REMATCH[1]}
+              test_file="tests/test_exercicio${exercise_num}.py"
+            else
+              continue
+            fi
+            
+            if [ -f "$test_file" ]; then
+              echo "📝 Testando $exercise_file..."
+              total_tests=$((total_tests + 1))
+              
+              if python -m pytest "$test_file" -v; then
+                echo "✅ $exercise_file: APROVADO"
+                passed_tests=$((passed_tests + 1))
+              else
+                echo "❌ $exercise_file: REPROVADO"
+                failed_exercises="$failed_exercises $exercise_file"
+              fi
+            fi
+          fi
+        done
+        
+        echo "📊 RESULTADO FINAL:"
+        echo "Total de exercícios testados: $total_tests"
+        echo "Exercícios aprovados: $passed_tests"
+        echo "Exercícios reprovados: $((total_tests - passed_tests))"
+        
+        if [ $passed_tests -eq $total_tests ] && [ $total_tests -gt 0 ]; then
+          echo "🎉 PARABÉNS! Todos os exercícios foram aprovados!"
+          exit 0
+        else
+          echo "⚠️  Alguns exercícios precisam de correção: $failed_exercises"
+          exit 1
+        fi
+    
+    - name: 📝 Comentar resultado no PR
+      if: always()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          
+          // Ler arquivos modificados
+          const { execSync } = require('child_process');
+          let exercises = [];
+          
+          try {
+            const files = execSync('ls respExercicio*.py Resposta_*.py 2>/dev/null || true', { encoding: 'utf8' });
+            exercises = files.trim().split('\n').filter(f => f);
+          } catch (e) {
+            console.log('Nenhum exercício encontrado');
+          }
+          
+          let comment = `## 🧪 Resultado da Correção Automática\n\n`;
+          
+          if (exercises.length === 0) {
+            comment += `❌ **Nenhum arquivo de exercício encontrado!**\n\n`;
+            comment += `Certifique-se de nomear seus arquivos corretamente:\n`;
+            comment += `- \`respExercicio01.py\`, \`respExercicio02.py\`, etc.\n`;
+            comment += `- \`Resposta_10.py\` (para o exercício 10)\n`;
+          } else {
+            comment += `📋 **Exercícios submetidos:** ${exercises.length}\n\n`;
+            
+            for (const exercise of exercises) {
+              if (exercise) {
+                comment += `- 📄 \`${exercise}\`\n`;
+              }
+            }
+            
+            comment += `\n---\n\n`;
+            comment += `### 📊 Status dos Testes\n`;
+            comment += `Os testes automáticos verificam:\n`;
+            comment += `- ✅ Existência das classes solicitadas\n`;
+            comment += `- ✅ Implementação correta dos métodos\n`;
+            comment += `- ✅ Funcionamento dos conceitos de POO\n`;
+            comment += `- ✅ Estrutura e relacionamentos entre objetos\n\n`;
+            
+            if (context.payload.pull_request.head.ref.includes('exercicio')) {
+              comment += `💡 **Dica:** Verifique os logs do workflow para detalhes sobre falhas nos testes.\n`;
+            }
+          }
+          
+          comment += `\n---\n`;
+          comment += `🤖 *Correção automática realizada pelo GitHub Actions*`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
